@@ -1,0 +1,990 @@
+import numpy
+from scapy.all import TCP
+
+from scapy.layers.inet import IP, TCP
+
+from cicflowmeter.features.context.packet_direction import PacketDirection
+from cicflowmeter.features.packet_time import PacketTime
+
+from cicflowmeter.features.context.packet_direction import PacketDirection
+from cicflowmeter.features.packet_time import PacketTime
+
+from scipy import stats as stat
+
+from datetime import datetime
+
+from scipy import stats as stat
+
+from scipy import stats as stat
+
+from cicflowmeter.features.context.packet_direction import PacketDirection
+
+class FlagCount:
+    """This class extracts features related to the Flags Count."""
+
+    def __init__(self, feature):
+        self.feature = feature
+        self.flags = {
+            "F": "FIN",
+            "S": "SYN",
+            "R": "RST",
+            "P": "PSH",
+            "A": "ACK",
+            "U": "URG",
+            "E": "ECE",
+            "C": "CWR",
+        }
+
+    def has_flag(self, flag, packet_direction=None) -> bool:
+        """Count packets by direction.
+
+        Returns:
+            packets_count (int):
+
+        """
+        packets = (
+            (
+                packet
+                for packet, direction in self.feature.packets
+                if direction == packet_direction and packet.haslayer(TCP)
+            )
+            if packet_direction is not None
+            else (packet for packet, _ in self.feature.packets if packet.haslayer(TCP))
+        )
+
+        for packet in packets:
+            if flag[0] in str(packet.flags):
+                return 1
+        return 0
+    
+class FlowBytes:
+    """Extracts features from the traffic related to the bytes in a flow"""
+
+    def __init__(self, feature):
+        self.feature = feature
+
+    def direction_list(self) -> list:
+        """Returns a list of the directions of the first 50 packets in a flow.
+
+        Return:
+            list with packet directions.
+
+        """
+        feat = self.feature
+        direction_list = [
+            (i, direction.name)[1]
+            for (i, (packet, direction)) in enumerate(feat.packets)
+            if i < 50
+        ]
+        return direction_list
+
+    def get_bytes(self) -> int:
+        """Calculates the amount bytes being transfered.
+
+        Returns:
+            int: The amount of bytes.
+
+        """
+        feat = self.feature
+
+        return sum(len(packet) for packet, _ in feat.packets)
+
+    def get_rate(self) -> float:
+        """Calculates the rate of the bytes being transfered in the current flow.
+
+        Returns:
+            float: The bytes/sec sent.
+
+        """
+        duration = PacketTime(self.feature).get_duration()
+
+        if duration == 0:
+            rate = 0
+        else:
+            rate = self.get_bytes() / duration
+
+        return rate
+
+    def get_bytes_sent(self) -> int:
+        """Calculates the amount bytes sent from the machine being used to run DoHlyzer.
+
+        Returns:
+            int: The amount of bytes.
+
+        """
+        feat = self.feature
+
+        return sum(
+            len(packet)
+            for packet, direction in feat.packets
+            if direction == PacketDirection.FORWARD
+        )
+
+    def get_sent_rate(self) -> float:
+        """Calculates the rate of the bytes being sent in the current flow.
+
+        Returns:
+            float: The bytes/sec sent.
+
+        """
+        sent = self.get_bytes_sent()
+        duration = PacketTime(self.feature).get_duration()
+
+        if duration == 0:
+            rate = -1
+        else:
+            rate = sent / duration
+
+        return rate
+
+    def get_bytes_received(self) -> int:
+        """Calculates the amount bytes received.
+
+        Returns:
+            int: The amount of bytes.
+
+        """
+        packets = self.feature.packets
+
+        return sum(
+            len(packet)
+            for packet, direction in packets
+            if direction == PacketDirection.REVERSE
+        )
+
+    def get_received_rate(self) -> float:
+        """Calculates the rate of the bytes being received in the current flow.
+
+        Returns:
+            float: The bytes/sec received.
+
+        """
+        received = self.get_bytes_received()
+        duration = PacketTime(self.feature).get_duration()
+
+        if duration == 0:
+            rate = -1
+        else:
+            rate = received / duration
+
+        return rate
+
+    def get_forward_header_bytes(self) -> int:
+        """Calculates the amount of header bytes in the header sent in the same direction as the flow.
+
+        Returns:
+            int: The amount of bytes.
+
+        """
+
+        packets = self.feature.packets
+
+        return sum(
+            self._header_size(packet)
+            for packet, direction in packets
+            if direction == PacketDirection.FORWARD
+        )
+
+    def get_forward_rate(self) -> int:
+        """Calculates the rate of the bytes being going forward
+        in the current flow.
+
+        Returns:
+            float: The bytes/sec forward.
+
+        """
+        forward = self.get_forward_header_bytes()
+        duration = PacketTime(self.feature).get_duration()
+
+        if duration > 0:
+            rate = forward / duration
+        else:
+            rate = -1
+
+        return rate
+
+    def _header_size(self, packet):
+        return packet[IP].ihl * 4 if TCP in packet else 8
+
+    def get_reverse_header_bytes(self) -> int:
+        """Calculates the amount of header bytes in the header sent in the opposite direction as the flow.
+
+        Returns:
+            int: The amount of bytes.
+
+        """
+
+        packets = self.feature.packets
+
+        if not packets:
+            return 0
+
+        return sum(
+            self._header_size(packet)
+            for packet, direction in packets
+            if direction == PacketDirection.REVERSE
+        )
+
+    def get_min_forward_header_bytes(self) -> int:
+        """Calculates the amount of header bytes in the header sent in the opposite direction as the flow.
+
+        Returns:
+            int: The amount of bytes.
+
+        """
+
+        packets = self.feature.packets
+
+        if not packets:
+            return 0
+
+        return min(
+            self._header_size(packet)
+            for packet, direction in packets
+            if direction == PacketDirection.FORWARD
+        )
+
+    def get_reverse_rate(self) -> int:
+        """Calculates the rate of the bytes being going reverse
+        in the current flow.
+
+        Returns:
+            float: The bytes/sec reverse.
+
+        """
+        reverse = self.get_reverse_header_bytes()
+        duration = PacketTime(self.feature).get_duration()
+
+        if duration == 0:
+            rate = -1
+        else:
+            rate = reverse / duration
+
+        return rate
+
+    def get_header_in_out_ratio(self) -> float:
+        """Calculates the ratio of foward traffic over reverse traffic.
+
+        Returns:
+            float: The ratio over reverse traffic.
+            If the reverse header bytes is 0 this returns -1 to avoid
+            a possible division by 0.
+
+        """
+        reverse_header_bytes = self.get_reverse_header_bytes()
+        forward_header_bytes = self.get_forward_header_bytes()
+
+        ratio = -1
+        if reverse_header_bytes != 0:
+            ratio = forward_header_bytes / reverse_header_bytes
+
+        return ratio
+
+    def get_initial_ttl(self) -> int:
+        """Obtains the initial time-to-live value.
+
+        Returns:
+            int: The initial ttl value in seconds.
+
+        """
+        feat = self.feature
+        return [packet["IP"].ttl for packet, _ in feat.packets][0]
+
+    def get_bytes_per_bulk(self, packet_direction):
+        if packet_direction == PacketDirection.FORWARD:
+            if self.feature.forward_bulk_count != 0:
+                return self.feature.forward_bulk_size / self.feature.forward_bulk_count
+        else:
+            if self.feature.backward_bulk_count != 0:
+                return (
+                    self.feature.backward_bulk_size / self.feature.backward_bulk_count
+                )
+        return 0
+
+    def get_packets_per_bulk(self, packet_direction):
+        if packet_direction == PacketDirection.FORWARD:
+            if self.feature.forward_bulk_count != 0:
+                return (
+                    self.feature.forward_bulk_packet_count
+                    / self.feature.forward_bulk_count
+                )
+        else:
+            if self.feature.backward_bulk_count != 0:
+                return (
+                    self.feature.backward_bulk_packet_count
+                    / self.feature.backward_bulk_count
+                )
+        return 0
+
+    def get_bulk_rate(self, packet_direction):
+        if packet_direction == PacketDirection.FORWARD:
+            if self.feature.forward_bulk_count != 0:
+                return (
+                    self.feature.forward_bulk_size / self.feature.forward_bulk_duration
+                )
+        else:
+            if self.feature.backward_bulk_count != 0:
+                return (
+                    self.feature.backward_bulk_size
+                    / self.feature.backward_bulk_duration
+                )
+        return 0
+
+class PacketCount:
+    """This class extracts features related to the Packet Count."""
+
+    def __init__(self, feature):
+        self.feature = feature
+
+    def get_total(self, packet_direction=None) -> int:
+        """Count packets by direction.
+
+        Returns:
+            packets_count (int):
+
+        """
+
+        if packet_direction is not None:
+            return len(
+                [
+                    packet
+                    for packet, direction in self.feature.packets
+                    if direction == packet_direction
+                ]
+            )
+        return len(self.feature.packets)
+
+    def get_rate(self, packet_direction=None) -> float:
+        """Calculates the rate of the packets being transfered
+        in the current flow.
+
+        Returns:
+            float: The packets/sec.
+
+        """
+        duration = PacketTime(self.feature).get_duration()
+
+        if duration == 0:
+            rate = 0
+        else:
+            rate = self.get_total(packet_direction) / duration
+
+        return rate
+
+    def get_down_up_ratio(self) -> float:
+        """Calculates download and upload ratio.
+
+        Returns:
+            float: down/up ratio
+        """
+        forward_size = self.get_total(PacketDirection.FORWARD)
+        backward_size = self.get_total(PacketDirection.REVERSE)
+        if forward_size > 0:
+            return backward_size / forward_size
+        return 0
+
+    @staticmethod
+    def get_payload(packet):
+        if "TCP" in packet:
+            return packet["TCP"].payload
+        elif "UDP" in packet:
+            return packet["UDP"].payload
+        return 0
+
+    def has_payload(self, packet_direction=None) -> int:
+        """Calculates download and upload ratio.
+
+        Returns:
+            int: packets
+        """
+
+        if packet_direction is not None:
+            return len(
+                [
+                    packet
+                    for packet, direction in self.feature.packets
+                    if direction == packet_direction
+                    and len(self.get_payload(packet)) > 0
+                ]
+            )
+        return len(
+            [
+                packet
+                for packet, direction in self.feature.packets
+                if len(self.get_payload(packet)) > 0
+            ]
+        )
+
+class PacketIndex:
+    """This class extracts features related to the Packet Index."""
+
+    def __init__(self, feature):
+        self.feature = feature
+
+    def get_indexes(self, sep="_") -> str:
+        """Packet indexes in a PCAP file.
+
+        Returns:
+            a str separating packet indexes by a sep:
+
+        """
+
+        return sep.join(map(str, self.feature.packets_indexes))
+    
+class PacketLength:
+    """This class extracts features related to the Packet Lengths.
+
+    Attributes:
+        mean_count (int): The row number.
+        grand_total (float): The cummulative total of the means.
+
+    """
+
+    mean_count = 0
+    grand_total = 0
+
+    def __init__(self, feature):
+        self.feature = feature
+
+    def get_packet_length(self, packet_direction=None) -> list:
+        """Creates a list of packet lengths.
+
+        Returns:
+            packet_lengths (List[int]):
+
+        """
+        if packet_direction is not None:
+            return [
+                len(packet)
+                for packet, direction in self.feature.packets
+                if direction == packet_direction
+            ]
+        return [len(packet) for packet, _ in self.feature.packets]
+
+    def get_header_length(self, packet_direction=None) -> list:
+        """Creates a list of packet lengths.
+
+        Returns:
+            packet_lengths (List[int]):
+
+        """
+        if packet_direction is not None:
+            return (
+                packet["IP"].ihl * 4
+                for packet, direction in self.feature.packets
+                if direction == packet_direction
+            )
+        return (packet["IP"].ihl * 4 for packet, _ in self.feature.packets)
+
+    def get_total_header(self, packet_direction=None) -> int:
+        """Calculates the summary header lengths.
+
+        Returns:
+            packet_lengths (List[int]):
+
+        """
+        return sum(self.get_header_length(packet_direction))
+
+    def get_min_header(self, packet_direction=None) -> int:
+        """Min the summary header lengths.
+
+        Returns:
+            packet_lengths (List[int]):
+
+        """
+        return min(self.get_header_length(packet_direction))
+
+    def get_max(self, packet_direction=None) -> int:
+        """Max packet lengths in flow direction.
+
+        Returns:
+            packet_lengths (int):
+
+        """
+
+        try:
+            return max(self.get_packet_length(packet_direction))
+        except ValueError:
+            return 0
+
+    def get_min(self, packet_direction=None) -> int:
+        """Min packet lengths in forward direction.
+
+        Returns:
+            packet_lengths (int):
+
+        """
+
+        try:
+            return min(self.get_packet_length(packet_direction))
+        except ValueError:
+            return 0
+
+    def get_total(self, packet_direction=None) -> int:
+        """Total packet lengths by direction.
+
+        Returns:
+            packet_lengths (int):
+
+        """
+
+        return sum(self.get_packet_length(packet_direction))
+
+    def get_avg(self, packet_direction=None) -> int:
+        """Total packet lengths by direction.
+
+        Returns:
+            packet_lengths (int):
+
+        """
+        count = len(self.get_packet_length(packet_direction))
+
+        if count > 0:
+            return self.get_total(packet_direction) / count
+        return 0
+
+    def first_fifty(self) -> list:
+        """Returns first 50 packet sizes
+
+        Return:
+            List of Packet Sizes
+
+        """
+        return self.get_packet_length()[:50]
+
+    def get_var(self, packet_direction=None) -> float:
+        """The variation of packet lengths in a network Feature.
+
+        Returns:
+            float: The variation of packet lengths.
+
+        """
+        var = 0
+        if len(self.get_packet_length(packet_direction)) > 0:
+            var = numpy.var(self.get_packet_length(packet_direction))
+        return var
+
+    def get_std(self, packet_direction=None) -> float:
+        """The standard deviation of packet lengths in a network flow.
+
+        Rens:
+            float: The standard deviation of packet lengths.
+
+        """
+        return numpy.sqrt(self.get_var(packet_direction))
+
+    def get_mean(self, packet_direction=None) -> float:
+        """The mean of packet lengths in a network flow.
+
+        Returns:
+            float: The mean of packet lengths.
+
+        """
+        mean = 0
+        if len(self.get_packet_length(packet_direction)) > 0:
+            mean = numpy.mean(self.get_packet_length(packet_direction))
+
+        return mean
+
+    def get_median(self) -> float:
+        """The median of packet lengths in a network flow.
+
+        Returns:
+            float: The median of packet lengths.
+
+        """
+        return numpy.median(self.get_packet_length())
+
+    def get_mode(self) -> float:
+        """The mode of packet lengths in a network flow.
+
+        Returns:
+            float: The mode of packet lengths.
+
+        """
+        mode = -1
+        if len(self.get_packet_length()) != 0:
+            mode = int(stat.mode(self.get_packet_length())[0])
+
+        return mode
+
+    def get_skew(self) -> float:
+        """The skew of packet lengths in a network flow using the median.
+
+        Returns:
+            float: The skew of packet lengths.
+
+        """
+        mean = self.get_mean()
+        median = self.get_median()
+        dif = 3 * (mean - median)
+        std = self.get_std()
+        skew = -10
+
+        if std != 0:
+            skew = dif / std
+
+        return skew
+
+    def get_skew2(self) -> float:
+        """The skew of the packet lengths ina network flow using the mode.
+
+        Returns:
+            float: The skew of the packet lengths.
+
+        """
+        mean = self.get_mean()
+        mode = self.get_mode()
+        dif = mean - mode
+        std = self.get_std()
+        skew2 = -10
+
+        if std != 0:
+            skew2 = dif / std
+
+        return skew2
+
+    def get_cov(self) -> float:
+        """The coefficient of variance of packet lengths in a network flow.
+
+        Returns:
+            float: The coefficient of variance of a packet lengths list.
+
+        """
+        cov = -1
+        if self.get_mean() != 0:
+            cov = self.get_std() / self.get_mean()
+
+        return cov
+
+class PacketTime:
+    """This class extracts features related to the Packet Times."""
+
+    count = 0
+
+    def __init__(self, flow):
+        self.flow = flow
+        PacketTime.count += 1
+        self.packet_times = None
+
+    def _get_packet_times(self):
+        """Gets a list of the times of the packets on a flow
+
+        Returns:
+            A list of the packet times.
+
+        """
+        if self.packet_times is not None:
+            return self.packet_times
+        first_packet_time = self.flow.packets[0][0].time
+        packet_times = [
+            float(packet.time - first_packet_time) for packet, _ in self.flow.packets
+        ]
+        return packet_times
+
+    def get_packet_iat(self, packet_direction=None):
+        """
+        Return Inter-arrival times in milliseconds
+        :param packet_direction:
+        :return: array of iats
+        """
+        if packet_direction is not None:
+            packets = [
+                packet
+                for packet, direction in self.flow.packets
+                if direction == packet_direction
+            ]
+        else:
+            packets = [packet for packet, direction in self.flow.packets]
+
+        packet_iat = []
+        for i in range(1, len(packets)):
+            packet_iat.append(1e3 * float(packets[i].time - packets[i - 1].time))
+
+        return packet_iat
+
+    def relative_time_list(self):
+        relative_time_list = []
+        packet_times = self._get_packet_times()
+        for index, time in enumerate(packet_times):
+            if index == 0:
+                relative_time_list.append(0)
+            elif index < len(packet_times):
+                relative_time_list.append(float(time - packet_times[index - 1]))
+            elif index < 50:
+                relative_time_list.append(0)
+            else:
+                break
+
+        return relative_time_list
+
+    def get_time_stamp(self):
+        """Returns the date and time in a human readeable format.
+
+        Return (str):
+            String of Date and time.
+
+        """
+        time = self.flow.packets[0][0].time
+        date_time = datetime.fromtimestamp(time).strftime("%Y-%m-%d %H:%M:%S")
+        return date_time
+
+    def get_duration(self):
+        """Calculates the duration of a network flow.
+
+        Returns:
+            The duration of a network flow.
+
+        """
+
+        return max(self._get_packet_times()) - min(self._get_packet_times())
+
+    def get_var(self):
+        """Calculates the variation of packet times in a network flow.
+
+        Returns:
+            float: The variation of packet times.
+
+        """
+        return numpy.var(self._get_packet_times())
+
+    def get_std(self):
+        """Calculates the standard deviation of packet times in a network flow.
+
+        Returns:
+            float: The standard deviation of packet times.
+
+        """
+        return numpy.sqrt(self.get_var())
+
+    def get_mean(self):
+        """Calculates the mean of packet times in a network flow.
+
+        Returns:
+            float: The mean of packet times
+
+        """
+        mean = 0
+        if self._get_packet_times() != 0:
+            mean = numpy.mean(self._get_packet_times())
+
+        return mean
+
+    def get_median(self):
+        """Calculates the median of packet times in a network flow.
+
+        Returns:
+            float: The median of packet times
+
+        """
+        return numpy.median(self._get_packet_times())
+
+    def get_mode(self):
+        """The mode of packet times in a network flow.
+
+        Returns:
+            float: The mode of packet times
+
+        """
+        mode = -1
+        if len(self._get_packet_times()) != 0:
+            mode = stat.mode(self._get_packet_times())
+            mode = float(mode[0])
+
+        return mode
+
+    def get_skew(self):
+        """Calculates the skew of packet times in a network flow using the median.
+
+        Returns:
+            float: The skew of packet times.
+
+        """
+        mean = self.get_mean()
+        median = self.get_median()
+        dif = 3 * (mean - median)
+        std = self.get_std()
+        skew = -10
+
+        if std != 0:
+            skew = dif / std
+
+        return skew
+
+    def get_skew2(self):
+        """Calculates the skew of the packet times ina network flow using the mode.
+
+        Returns:
+            float: The skew of the packet times.
+
+        """
+        mean = self.get_mean()
+        mode = self.get_mode()
+        dif = float(mean) - mode
+        std = self.get_std()
+        skew2 = -10
+
+        if std != 0:
+            skew2 = dif / float(std)
+
+        return skew2
+
+    def get_cov(self):
+        """Calculates the coefficient of variance of packet times in a network flow.
+
+        Returns:
+            float: The coefficient of variance of a packet times list.
+
+        """
+        cov = -1
+        if self.get_mean() != 0:
+            cov = self.get_std() / self.get_mean()
+
+        return cov
+
+class ResponseTime:
+    """A summary of features based on the time difference \
+       between an outgoing packet and the following response.
+    """
+
+    def __init__(self, feature):
+        self.feature = feature
+
+    def get_dif(self) -> list:
+        """Calculates the time difference in seconds between\
+           an outgoing packet and the following response packet.
+
+        Returns:
+            List[float]: A list of time differences.
+
+        """
+        time_diff = []
+        temp_packet = None
+        temp_direction = None
+        for packet, direction in self.feature.packets:
+            if (
+                temp_direction == PacketDirection.FORWARD
+                and direction == PacketDirection.REVERSE
+            ):
+                diff = packet.time - temp_packet.time
+                time_diff.append(float(diff))
+            temp_packet = packet
+            temp_direction = direction
+        return time_diff
+
+    def get_var(self) -> float:
+        """Calculates the variation of the list of time differences.
+
+        Returns:
+            float: The variation in time differences.
+
+        """
+        var = -1
+        if len(self.get_dif()) != 0:
+            var = numpy.var(self.get_dif())
+
+        return var
+
+    def get_mean(self) -> float:
+        """Calculates the mean of the list of time differences.
+
+        Returns:
+            float: The mean in time differences.
+
+        """
+        mean = -1
+        if len(self.get_dif()) != 0:
+            mean = numpy.mean(self.get_dif())
+
+        return mean
+
+    def get_median(self) -> float:
+        """Calculates the median of the list of time differences
+
+        Returns:
+            float: The median in time differences.
+
+        """
+        return numpy.median(self.get_dif())
+
+    def get_mode(self) -> float:
+        """Calculates the mode of the of time differences
+
+        Returns:
+            float: The mode in time differences.
+
+        """
+        mode = -1
+        if len(self.get_dif()) != 0:
+            mode = float(stat.mode(self.get_dif())[0])
+
+        return mode
+
+    def get_skew(self) -> float:
+        """Calculates the skew of the of time differences.
+
+        Note:
+            Uses a simple skew formula using the mean and the median.
+
+        Returns:
+            float: The skew in time differences.
+
+        """
+        mean = self.get_mean()
+        median = self.get_median()
+        dif = 3 * (mean - median)
+        std = self.get_std()
+        skew = -10
+        if std != 0:
+            skew = dif / std
+
+        return skew
+
+    def get_skew2(self) -> float:
+        """Calculates the skew of the of time differences.
+
+        Note:
+            Uses a simple skew formula using the mean and the mode
+
+        Returns:
+            float: The skew in time differences.
+
+        """
+        mean = self.get_mean()
+        mode = self.get_mode()
+        dif = float(mean) - mode
+        std = self.get_std()
+        skew2 = -10
+        if std != 0:
+            skew2 = dif / float(std)
+
+        return skew2
+
+    def get_std(self) -> float:
+        """Calculates the standard deviation of the list of time differences
+
+        Returns:
+            float: The standard deviation in time differences.
+
+        """
+        std = -1
+        if len(self.get_dif()) != 0:
+            std = numpy.sqrt(self.get_var())
+
+        return std
+
+    def get_cov(self) -> float:
+        """Calculates the coefficient of variance of the list of time differences
+
+        Note:
+            return -1 if division by 0.
+
+        Returns:
+            float: The coefficient of variance in time differences.
+
+        """
+        cov = -1
+        if self.get_mean() != 0:
+            cov = self.get_std() / self.get_mean()
+
+        return cov
